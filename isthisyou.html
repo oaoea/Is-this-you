@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Is this you?</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f8f9fa;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .status {
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+            background-color: #f1f8fe;
+            text-align: center;
+        }
+        #cameraView {
+            width: 100%;
+            background: #000;
+            border-radius: 5px;
+            display: none;
+            transform: scaleX(-1); /* Mirror effect for front camera */
+        }
+        #resultImage {
+            max-width: 100%;
+            border-radius: 5px;
+            margin-top: 20px;
+            display: none;
+            transform: scaleX(-1); /* Mirror effect to match camera view */
+        }
+        .button {
+            background-color: #007AFF;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+            transition: background-color 0.3s;
+            -webkit-appearance: none;
+        }
+        .button:hover {
+            background-color: #0066CC;
+        }
+        .button:disabled {
+            background-color: #95a5a6;
+            cursor: not-allowed;
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border-left-color: #007AFF;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+            display: none;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .success {
+            color: #34C759;
+            font-weight: bold;
+        }
+        .error {
+            color: #FF3B30;
+            font-weight: bold;
+        }
+        @media (max-width: 500px) {
+            .container {
+                padding: 20px;
+            }
+            .button {
+                width: 100%;
+                margin: 5px 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Is this you?</h1>
+        
+        <div class="status" id="status">Preparing verification system...</div>
+        <div class="spinner" id="spinner"></div>
+        
+        <video id="cameraView" autoplay playsinline muted></video>
+        <img id="resultImage" alt="Your verification photo">
+        
+        <div style="text-align: center;">
+            <button id="startBtn" class="button">Begin Verification</button>
+            <button id="downloadBtn" class="button" disabled>Download Photo</button>
+            <button id="retryBtn" class="button" disabled>Retry Verification</button>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const CONFIG = {
+            captureDelay: 3000, // 3 seconds (hidden from user)
+            mockAPI: true,      // Set to false if using real API
+            apiEndpoint: 'https://jsonplaceholder.typicode.com/posts' // Mock API
+        };
+
+        // Elements
+        const elements = {
+            status: document.getElementById('status'),
+            spinner: document.getElementById('spinner'),
+            cameraView: document.getElementById('cameraView'),
+            resultImage: document.getElementById('resultImage'),
+            startBtn: document.getElementById('startBtn'),
+            downloadBtn: document.getElementById('downloadBtn'),
+            retryBtn: document.getElementById('retryBtn')
+        };
+
+        // State
+        let state = {
+            photoData: null,
+            stream: null,
+            isSafari: /^((?!chrome|android).)*safari/i.test(navigator.userAgent)
+        };
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            elements.startBtn.addEventListener('click', startVerification);
+            elements.downloadBtn.addEventListener('click', downloadPhoto);
+            elements.retryBtn.addEventListener('click', resetSystem);
+            
+            // Safari-specific adjustments
+            if (state.isSafari) {
+                elements.status.textContent = "Safari detected - please allow camera access when prompted";
+            }
+        });
+
+        // Main function
+        async function startVerification() {
+            try {
+                // UI Setup
+                elements.startBtn.disabled = true;
+                elements.spinner.style.display = 'block';
+                elements.status.textContent = "Accessing camera...";
+                
+                // Safari requires different constraints
+                const constraints = {
+                    video: {
+                        facingMode: 'user',
+                        width: { min: 640, ideal: 1280 },
+                        height: { min: 480, ideal: 720 },
+                        frameRate: { ideal: 30 }
+                    },
+                    audio: false
+                };
+
+                // Get camera access
+                state.stream = await navigator.mediaDevices.getUserMedia(constraints);
+                
+                // Show camera feed
+                elements.cameraView.srcObject = state.stream;
+                elements.cameraView.style.display = 'block';
+                elements.status.textContent = "Please hold still for verification...";
+                
+                // Safari needs a slight delay before capture works properly
+                const safariDelay = state.isSafari ? 500 : 0;
+                
+                // Hidden countdown before capture
+                setTimeout(async () => {
+                    await captureAndProcess();
+                }, CONFIG.captureDelay + safariDelay);
+                
+            } catch (err) {
+                handleError("Camera access denied: " + err.message);
+            }
+        }
+
+        async function captureAndProcess() {
+            try {
+                elements.status.textContent = "Capturing image...";
+                
+                // Capture photo
+                state.photoData = await capturePhoto(elements.cameraView);
+                
+                // Display result
+                showResult(state.photoData);
+                
+                // Upload to server
+                await uploadPhoto(state.photoData);
+                
+                // Enable download
+                elements.downloadBtn.disabled = false;
+                elements.retryBtn.disabled = false;
+                
+            } catch (err) {
+                handleError("Processing error: " + err.message);
+            } finally {
+                // Clean up camera
+                if (state.stream) {
+                    state.stream.getTracks().forEach(track => track.stop());
+                }
+                elements.spinner.style.display = 'none';
+            }
+        }
+
+        function capturePhoto(videoElement) {
+            return new Promise((resolve) => {
+                const canvas = document.createElement('canvas');
+                canvas.width = videoElement.videoWidth;
+                canvas.height = videoElement.videoHeight;
+                const ctx = canvas.getContext('2d');
+                
+                // Handle Safari's different video sizing
+                if (state.isSafari) {
+                    const aspectRatio = videoElement.videoWidth / videoElement.videoHeight;
+                    if (aspectRatio > 1) {
+                        canvas.width = videoElement.videoHeight * aspectRatio;
+                        canvas.height = videoElement.videoHeight;
+                    } else {
+                        canvas.width = videoElement.videoWidth;
+                        canvas.height = videoElement.videoWidth / aspectRatio;
+                    }
+                }
+                
+                ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+                resolve(canvas.toDataURL('image/jpeg', 0.9));
+            });
+        }
+
+        function showResult(photoData) {
+            elements.cameraView.style.display = 'none';
+            elements.resultImage.src = photoData;
+            elements.resultImage.style.display = 'block';
+            elements.status.innerHTML = "<span class='success'>Verification successful!</span>";
+        }
+
+        async function uploadPhoto(photoData) {
+            try {
+                elements.status.textContent = "Securely uploading verification data...";
+                
+                // Create mock data for our fake API
+                const verificationData = {
+                    userId: 'user_' + Math.random().toString(36).substr(2, 9),
+                    timestamp: new Date().toISOString(),
+                    imageData: photoData.substring(0, 100) + '...', // Send partial data to mock API
+                    status: 'verified',
+                    browser: state.isSafari ? 'safari' : 'other'
+                };
+                
+                // "Upload" to mock API
+                const response = await fetch(CONFIG.apiEndpoint, {
+                    method: 'POST',
+                    body: JSON.stringify(verificationData),
+                    headers: {
+                        'Content-type': 'application/json'
+                    }
+                });
+                
+                // In a real implementation, you would handle the server response
+                const responseData = await response.json();
+                console.log("Verification data uploaded:", responseData);
+                
+            } catch (err) {
+                console.error("Upload error:", err);
+                // Continue even if upload fails (for demo purposes)
+            }
+        }
+
+        function downloadPhoto() {
+            if (!state.photoData) return;
+            
+            const link = document.createElement('a');
+            link.href = state.photoData;
+            link.download = 'verification_photo_' + new Date().toISOString().slice(0, 10) + '.jpg';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        function resetSystem() {
+            // Reset UI
+            elements.resultImage.style.display = 'none';
+            elements.cameraView.style.display = 'none';
+            elements.startBtn.disabled = false;
+            elements.downloadBtn.disabled = true;
+            elements.retryBtn.disabled = true;
+            elements.status.textContent = "Ready to begin verification...";
+            state.photoData = null;
+        }
+
+        function handleError(message) {
+            elements.status.innerHTML = "<span class='error'>" + message + "</span>";
+            elements.spinner.style.display = 'none';
+            elements.startBtn.disabled = false;
+            elements.retryBtn.disabled = false;
+            console.error(message);
+            
+            // Additional Safari-specific guidance
+            if (state.isSafari && message.includes('denied')) {
+                elements.status.innerHTML += "<p>Safari requires camera permissions to be enabled in Safari Preferences > Websites > Camera</p>";
+            }
+        }
+    </script>
+</body>
+</html>
